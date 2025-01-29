@@ -1,0 +1,58 @@
+data_dir = "/var/lib/vector"
+
+# Source configuration - equivalent to Logstash file input
+[sources.wazuh_alerts]
+type = "file"
+include = ["/var/ossec/logs/alerts/alerts.json"]
+read_from = "beginning"
+ignore_older_secs = 86400  # 24 hours, similar to Logstash default
+fingerprint.strategy = "device_and_inode"
+
+# Add Logstash-like metadata
+[transforms.add_metadata]
+type = "remap"
+inputs = ["wazuh_alerts"]
+source = '''
+. = parse_json!(.message)
+del(.message)
+.[@metadata] = {"beat": "wazuh"}
+'''
+
+# Configure template loading - mirrors Logstash template behavior
+[transforms.prepare_template]
+type = "remap"
+inputs = ["add_metadata"]
+source = '''
+# Load template if needed
+if !exists(.template_loaded) {
+    .template_loaded = true
+}
+'''
+
+# OpenSearch output configuration
+[sinks.opensearch_output]
+type = "opensearch"
+inputs = ["prepare_template"]
+endpoint = "${OPENSEARCH_ADDRESS}"  # Will be replaced with actual address
+bulk.timeout_secs = 30
+
+# Authentication
+auth.strategy = "basic"
+auth.user = "${VECTOR_OS_USER}"
+auth.password = "${VECTOR_OS_PASS}"
+
+# Index configuration
+index = "wazuh-alerts-4.x-%F"  # Equivalent to Logstash's date pattern
+
+# TLS/SSL Configuration
+tls.ca_file = "/etc/vector/certs/root-ca.pem"  # Adjust path as needed
+tls.verify_certificate = true
+tls.verify_hostname = true
+
+# Batch settings (tuned for security data)
+batch.max_events = 500
+batch.timeout_secs = 1
+
+# Error handling
+request.retry_attempts = 3
+request.retry_max_duration_secs = 300
